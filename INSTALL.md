@@ -1,5 +1,11 @@
 # Installation
 
+* Init the submodules
+
+```bash
+git submodule update --init --recursive
+```
+
 * Install python dependencies
 
 ```bash
