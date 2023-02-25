@@ -1,7 +1,7 @@
 import z3
 import cvc5.pythonic as cvc5
 
-def to_cvc5(fml: z3.ExprRef) -> cvc5.ExprRef:
+def z3_to_cvc5(fml: z3.ExprRef) -> cvc5.ExprRef:
 
     def find_constants(fml: z3.ExprRef):
         symbols = {}
@@ -264,3 +264,21 @@ def to_cvc5(fml: z3.ExprRef) -> cvc5.ExprRef:
 
     symbols = find_constants(fml)
     return visit(fml)
+
+if __name__ == "__main__":
+    a1 = z3.BitVec('a!1', 32)
+    a2 = z3.BitVec('a!2', 8)
+    eax = z3.BitVec('eax', 32)
+    fml_z3 = (z3.LShR(a1, z3.Concat(z3.BitVecVal(0, 24), a2)) ^ 1 ) & 1  == eax
+    print(fml_z3.sexpr())
+    fml_cvc5 = z3_to_cvc5(fml_z3)
+    solver = cvc5.Solver()
+    solver.add(fml_cvc5)
+    result = solver.check()
+    if result == cvc5.sat:
+        print("sat")
+        print(solver.model())
+    elif result == cvc5.unsat:
+        print("unsat")
+    else:
+        print("unknown")
