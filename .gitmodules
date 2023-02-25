@@ -1,0 +1,9 @@
+[submodule "benchmarks/smtlib/QF_LIRA"]
+	path = benchmarks/smtlib/QF_LIRA
+	url = https://clc-gitlab.cs.uiowa.edu:2443/SMT-LIB-benchmarks/QF_LIRA.git
+[submodule "benchmarks/smtlib/QF_LRA"]
+	path = benchmarks/smtlib/QF_LRA
+	url = https://clc-gitlab.cs.uiowa.edu:2443/SMT-LIB-benchmarks/QF_LRA.git
+[submodule "benchmarks/gurobi/modeling-examples"]
+	path = benchmarks/gurobi/modeling-examples
+	url = https://github.com/Gurobi/modeling-examples.git
