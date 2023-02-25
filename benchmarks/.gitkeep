@@ -1,0 +1,518 @@
+import z3
+from typing import Dict, List
+import graphviz
+
+import logging
+l = logging.getLogger('infer')
+l.setLevel(logging.DEBUG)
+l.handlers.clear()
+sh = logging.StreamHandler()
+sh.setLevel(logging.INFO)
+# formatter = logging.Formatter('%(created)f:%(levelname)s:%(name)s:%(module)s:%(message)s')
+formatter = logging.Formatter('{levelname:<8s} | {module:<11s} | {name} | {message}', style='{')
+sh.setFormatter(formatter)
+l.addHandler(sh)
+
+
+def draw_ast(fml: z3.ExprRef):
+    graph = graphviz.Digraph('G', filename='ast.gv',
+                             edge_attr={
+                                 'fontname': "Helvetica,Arial,sans-serif",
+                                 'color': 'black',
+                                 'style': 'filled'},
+                             graph_attr={
+                                 'fontname': "Helvetica,Arial,sans-serif",
+                                 'fixedsize': 'false',
+                                 'bgcolor': 'transparent'},
+                             node_attr={
+                                 'fontname': "Helvetica,Arial,sans-serif",
+                                 'fontsize': '12',
+                                 'fixedsize': 'false',
+                                 'margin': '0.01',
+                                 'shape': 'ellipse',
+                                 'color': 'black',
+                                 'style': 'filled',
+                                 'fillcolor': 'lightsteelblue3'})
+    counter = 0
+
+    def id():
+        nonlocal counter
+        counter += 1
+        return str(counter)
+
+    def visit(e: z3.ExprRef):
+        if z3.is_app(e):
+
+            if z3.is_false(e):  # Z3_OP_TRUE:
+                return True
+
+            if z3.is_true(e):  # Z3_OP_FALSE:
+                return False
+
+            if z3.is_eq(e):
+                top = id()
+                graph.node(top, label="=")
+                left = visit(e.arg(0))
+                graph.edge(top, left[0])
+                right = visit(e.arg(1))
+                graph.edge(top, right[0])
+                if left[1] == None or right[1] == None:
+                    return (top, None)
+                new_domain = left[1].equal(right[1])
+                env[str(e)] = new_domain
+                return top, new_domain
+
+            if z3.is_distinct(e):
+                top = id()
+                graph.node(top, label="distinct")
+                args = [visit(arg) for arg in e.children()]
+                for arg in args:
+                    graph.edge(top, arg[0])
+                return top, None
+
+            if e.decl().kind() == z3.Z3_OP_ITE:
+                top = id()
+                graph.node(top, label="ite")
+                left = visit(e.arg(0))
+                graph.edge(top, left, label="cond")
+                middle = visit(e.arg(1))
+                graph.edge(top, middle, label="then")
+                right = visit(e.arg(2))
+                graph.edge(top, right, label="else")
+                return top, None
+
+            if z3.is_and(e):  # z3.Z3_OP_AND
+                top = id()
+                graph.node(top, label="and")
+                args = [visit(arg) for arg in e.children()]
+                for arg in args:
+                    graph.edge(top, arg[0])
+                return top, None
+
+            if z3.is_or(e):  # z3.Z3_OP_OR:
+                top = id()
+                graph.node(top, label="or")
+                args = [visit(arg) for arg in e.children()]
+                for arg in args:
+                    graph.edge(top, arg[0])
+                return top, None
+
+            # z3.Z3_OP_IFF = 263
+            # z3.Z3_OP_XOR = 264
+
+            if z3.is_not(e):  # z3.Z3_OP_NOT:
+                top = id()
+                graph.node(top, label="not")
+                arg = visit(e.arg(0))
+                graph.edge(top, arg[0])
+                return top, None
+
+            if z3.is_implies(e):  # z3.Z3_OP_IMPLIES:
+                top = id()
+                graph.node(top, label="=>")
+                left = visit(e.arg(0))
+                graph.edge(top, left[0])
+                right = visit(e.arg(1))
+                graph.edge(top, right[0])
+                return top, None
+
+            # z3.Z3_OP_OEQ = 267
+            # z3.Z3_OP_ANUM = 512
+            # z3.Z3_OP_AGNUM = 513
+            # z3.Z3_OP_LE = 514
+            # z3.Z3_OP_GE = 515
+            # z3.Z3_OP_LT = 516
+            # z3.Z3_OP_GT = 517
+            # z3.Z3_OP_ADD = 518
+            # z3.Z3_OP_SUB = 519
+            # z3.Z3_OP_UMINUS = 520
+            # z3.Z3_OP_MUL = 521
+            # z3.Z3_OP_DIV = 522
+            # z3.Z3_OP_IDIV = 523
+            # z3.Z3_OP_REM = 524
+            # z3.Z3_OP_MOD = 525
+
+            if e.decl().kind() == z3.Z3_OP_BNEG:
+                top = id()
+                left = visit(e.arg(0))
+                right = visit(e.arg(1))
+                graph.node(top, label="bvneg")
+                graph.edge(top, left[0])
+                graph.edge(top, right[0])
+                return top, None
+
+            if e.decl().kind() == z3.Z3_OP_BADD:
+                top = id()
+                left = visit(e.arg(0))
+                right = visit(e.arg(1))
+                graph.node(top, label="bvadd")
+                graph.edge(top, left[0])
+                graph.edge(top, right[0])
+                if left[1] == None or right[1] == None:
+                    return (top, None)
+                if left[1].free() or right[1].free():
+                    new_domain = Domain.unconstrained(e.size())
+                    env[str(e)] = new_domain
+                    return top, new_domain
+                return top, None
+
+            if e.decl().kind() == z3.Z3_OP_BSUB:
+                top = id()
+                left = visit(e.arg(0))
+                right = visit(e.arg(1))
+                graph.node(top, label="bvsub")
+                graph.edge(top, left[0])
+                graph.edge(top, right[0])
+                return top, None
+
+            if e.decl().kind() == z3.Z3_OP_BMUL:
+                top = id()
+                left = visit(e.arg(0))
+                right = visit(e.arg(1))
+                graph.node(top, label="bvmul")
+                graph.edge(top, left[0])
+                graph.edge(top, right[0])
+                return top, None
+
+            if e.decl().kind() == z3.Z3_OP_BSDIV:
+                top = id()
+                left = visit(e.arg(0))
+                right = visit(e.arg(1))
+                graph.node(top, label="bvsdiv")
+                graph.edge(top, left[0])
+                graph.edge(top, right[0])
+                return top, None
+
+            if e.decl().kind() == z3.Z3_OP_BUDIV:
+                top = id()
+                left = visit(e.arg(0))
+                right = visit(e.arg(1))
+                graph.node(top, label="bvudiv")
+                graph.edge(top, left[0])
+                graph.edge(top, right[0])
+                return top, None
+
+            if e.decl().kind() == z3.Z3_OP_BSREM:
+                top = id()
+                left = visit(e.arg(0))
+                right = visit(e.arg(1))
+                graph.node(top, label="bvsrem")
+                graph.edge(top, left[0])
+                graph.edge(top, right[0])
+                return top, None
+
+            if e.decl().kind() == z3.Z3_OP_BUREM:
+                top = id()
+                left = visit(e.arg(0))
+                right = visit(e.arg(1))
+                graph.node(top, label="bvurem")
+                graph.edge(top, left[0])
+                graph.edge(top, right[0])
+                return top, None
+
+            if e.decl().kind() == z3.Z3_OP_BSMOD:
+                top = id()
+                left = visit(e.arg(0))
+                right = visit(e.arg(1))
+                graph.node(top, label="bvsmod")
+                graph.edge(top, left[0])
+                graph.edge(top, right[0])
+                return top, None
+
+            if e.decl().kind() == z3.Z3_OP_ULEQ:
+                top = id()
+                left = visit(e.arg(0))
+                right = visit(e.arg(1))
+                graph.node(top, label="bvule")
+                graph.edge(top, left[0])
+                graph.edge(top, right[0])
+                return top, None
+
+            if e.decl().kind() == z3.Z3_OP_SLEQ:
+                top = id()
+                left = visit(e.arg(0))
+                right = visit(e.arg(1))
+                graph.node(top, label="bvusle")
+                graph.edge(top, left[0])
+                graph.edge(top, right[0])
+                return top, None
+
+            if e.decl().kind() == z3.Z3_OP_UGEQ:
+                top = id()
+                left = visit(e.arg(0))
+                right = visit(e.arg(1))
+                graph.node(top, label="bvuge")
+                graph.edge(top, left[0])
+                graph.edge(top, right[0])
+                return top, None
+
+            if e.decl().kind() == z3.Z3_OP_SGEQ:
+                top = id()
+                left = visit(e.arg(0))
+                right = visit(e.arg(1))
+                graph.node(top, label="bvsge")
+                graph.edge(top, left[0])
+                graph.edge(top, right[0])
+                return top, None
+
+            if e.decl().kind() == z3.Z3_OP_ULT:
+                top = id()
+                left = visit(e.arg(0))
+                right = visit(e.arg(1))
+                graph.node(top, label="bvult")
+                graph.edge(top, left[0])
+                graph.edge(top, right[0])
+                return top, None
+
+            if e.decl().kind() == z3.Z3_OP_SLT:
+                top = id()
+                left = visit(e.arg(0))
+                right = visit(e.arg(1))
+                graph.node(top, label="bvslt")
+                graph.edge(top, left[0])
+                graph.edge(top, right[0])
+                return top, None
+
+            if e.decl().kind() == z3.Z3_OP_UGT:
+                top = id()
+                left = visit(e.arg(0))
+                right = visit(e.arg(1))
+                graph.node(top, label="bvugt")
+                graph.edge(top, left[0])
+                graph.edge(top, right[0])
+                return top, None
+
+            if e.decl().kind() == z3.Z3_OP_SGT:
+                top = id()
+                left = visit(e.arg(0))
+                right = visit(e.arg(1))
+                graph.node(top, label="bvsgt")
+                graph.edge(top, left[0])
+                graph.edge(top, right[0])
+                return top, None
+
+            if e.decl().kind() == z3.Z3_OP_BAND:
+                top = id()
+                left = visit(e.arg(0))
+                right = visit(e.arg(1))
+                graph.node(top, label="bvand")
+                graph.edge(top, left[0])
+                graph.edge(top, right[0])
+                if left[1] == None or right[1] == None:
+                    return (top, None)
+                new_domain = left[1] & right[1]
+                env[str(e)] = new_domain
+                return top, new_domain
+
+            if e.decl().kind() == z3.Z3_OP_BOR:
+                top = id()
+                left = visit(e.arg(0))
+                right = visit(e.arg(1))
+                graph.node(top, label="bvor")
+                graph.edge(top, left[0])
+                graph.edge(top, right[0])
+                if left[1] == None or right[1] == None:
+                    return (top, None)
+                new_domain = left[1] or right[1]
+                env[str(e)] = new_domain
+                return top, new_domain
+
+            if e.decl().kind() == z3.Z3_OP_BNOT:
+                top = id()
+                graph.node(top, label="bvnot")
+                arg = visit(e.arg(0))
+                graph.edge(top, arg[0])
+                if arg[1] == None:
+                    return (top, None)
+                new_domain = ~arg[1]
+                env[str(e)] = new_domain
+                return top, new_domain
+
+            if e.decl().kind() == z3.Z3_OP_BXOR:
+                top = id()
+                left = visit(e.arg(0))
+                right = visit(e.arg(1))
+                graph.node(top, label="bvxor")
+                graph.edge(top, left[0])
+                graph.edge(top, right[0])
+                if left[1] == None or right[1] == None:
+                    return (top, None)
+                new_domain = left[1] ^ right[1]
+                env[str(e)] = new_domain
+                return top, new_domain
+
+            if e.decl().kind() == z3.Z3_OP_BXNOR:
+                raise Exception("Unknown operator:z3.Z3_OP_BXNOR")
+
+            if e.decl().kind() == z3.Z3_OP_BNAND:
+                raise Exception("Unknown operator:z3.Z3_OP_BNAND")
+
+            if e.decl().kind() == z3.Z3_OP_BNOR:
+                raise Exception("Unknown operator:z3.Z3_OP_BNOR")
+
+            if e.decl().kind() == z3.Z3_OP_BXNOR:
+                raise Exception("Unknown operator:z3.Z3_OP_BXNOR")
+
+            if e.decl().kind() == z3.Z3_OP_CONCAT:
+                top = id()
+                graph.node(top, label="concat")
+                args = [visit(arg) for arg in e.children()]
+                for arg in args:
+                    graph.edge(top, arg[0])
+                if args[0][1] == None:
+                    return (top, None)
+                concated = args[0][1]
+                for i in range(1, len(args)):
+                    if args[i][1] == None:
+                        return (top, None)
+                    concated = concated.concat(args[i][1])
+                env[str(e)] = concated
+                return top, concated
+
+            if e.decl().kind() == z3.Z3_OP_SIGN_EXT:
+                top = id()
+                graph.node(top, label="sign_ext[%d]" % e.params()[0])
+                right = visit(e.arg(0))
+                graph.edge(top, right[0])
+                return top, None
+
+            if e.decl().kind() == z3.Z3_OP_ZERO_EXT:
+                top = id()
+                graph.node(top, label="zero_ext[%d]" % e.params()[0])
+                right = visit(e.arg(0))
+                graph.edge(top, right[0])
+                return top, None
+
+            if e.decl().kind() == z3.Z3_OP_EXTRACT:
+                top = id()
+                high = e.params()[0]
+                low = e.params()[1]
+                graph.node(top, label="extract[%d:%d]" % (high, low))
+                a = visit(e.arg(0))
+                graph.edge(top, a[0])
+                if a[1] == None:
+                    return (top, None)
+                env[str(e)] = a[1].extract(high, low)
+                return top, env[str(e)]
+
+            # z3.Z3_OP_REPEAT = 1060
+            # z3.Z3_OP_BREDOR = 1061
+            # z3.Z3_OP_BREDAND = 1062
+            # z3.Z3_OP_BCOMP = 1063
+
+            if e.decl().kind() == z3.Z3_OP_BSHL:
+                top = id()
+                left = visit(e.arg(0))
+                right = visit(e.arg(1))
+                graph.node(top, label="bvshl")
+                graph.edge(top, left[0])
+                graph.edge(top, right[0])
+                return top, None
+
+            if e.decl().kind() == z3.Z3_OP_BLSHR:
+                top = id()
+                left = visit(e.arg(0))
+                right = visit(e.arg(1))
+                graph.node(top, label="bvlshr")
+                graph.edge(top, left[0])
+                graph.edge(top, right[0])
+                if left[1] == None or right[1] == None:
+                    return (top, None)
+                count_stars = 0
+                for i in reversed(right[1].domain):
+                    if i == '*':
+                        count_stars += 1
+                    else:
+                        break
+                if 2**count_stars >= left[1].width() and left[1].free():
+                    return (top, Domain.unconstrained(left[1].width()))
+                return top, None
+
+            if e.decl().kind() == z3.Z3_OP_BASHR:
+                top = id()
+                left = visit(e.arg(0))
+                right = visit(e.arg(1))
+                graph.node(top, label="bvashr")
+                graph.edge(top, left[0])
+                graph.edge(top, right[0])
+                return top, None
+
+            if e.decl().kind() == z3.Z3_OP_EXT_ROTATE_LEFT or e.decl().kind() == z3.Z3_OP_ROTATE_LEFT:
+                top = id()
+                left = visit(e.arg(0))
+                right = visit(e.arg(1))
+                graph.node(top, label="bvrol")
+                graph.edge(top, left[0])
+                graph.edge(top, right[0])
+                if left[1] == None or right[1] == None:
+                    return (top, None)
+
+                # new_domain = Domain(str(e), )
+                # env[str(e)] = new_domain
+                # return top, new_domain
+
+            if e.decl().kind() == z3.Z3_OP_EXT_ROTATE_RIGHT or e.decl().kind() == z3.Z3_OP_ROTATE_RIGHT:
+                top = id()
+                left = visit(e.arg(0))
+                right = visit(e.arg(1))
+                graph.node(top, label="bvror")
+                graph.edge(top, left[0])
+                graph.edge(top, right[0])
+                return top, None
+
+            if z3.is_const(e) and e.decl().kind() == z3.Z3_OP_UNINTERPRETED:
+                top = id()
+                graph.node(top, label=f"<{e.decl().name()}<FONT POINT-SIZE='10'><SUB>[{e.size()}]</SUB></FONT>>",
+                           shape="circle", fillcolor="steelblue1")
+                return top, env[e.decl().name()]
+
+            if z3.is_bv_value(e):
+                top = id()
+                graph.node(
+                    top, label=f"<{e.as_long()}<FONT POINT-SIZE='10'><SUB>[{e.size()}]</SUB></FONT>>", shape="circle", fillcolor="steelblue1")
+                return top, Domain.constant(e.as_long(), e.size())
+
+            if z3.is_app(e):
+                raise Exception("Unknown function: {}".format(str(e)))
+
+            else:
+                raise Exception("Unknown operator: {}".format(e.decl().kind()))
+
+    def create_env(fml: z3.ExprRef) -> Dict[str, Domain]:
+        env = {}
+
+        def visitor(e, seen):
+            if e in seen:
+                return
+            seen[e] = True
+            yield e
+            if z3.is_app(e):
+                for ch in e.children():
+                    for e in visitor(ch, seen):
+                        yield e
+                return
+
+        for e in visitor(fml, seen={}):
+            if z3.is_const(e) and e.decl().kind() == z3.Z3_OP_UNINTERPRETED:
+                env[e.decl().name()] = Domain.unconstrained(e.size())
+
+        return env
+
+    if env is None:
+        env = create_env(fml)
+
+    visit(fml)
+    graph.view()
+
+    for k, v in env.items():
+        l.info(f"D[{k}]: {v}")
+
+    return graph
+
+
+# x = z3.BitVec('x', 8)
+# y = z3.BitVec('y', 5)
+# r = z3.BitVec('r', 8)
+# # z = z3.BitVec('y', 8)
+# # # graph = draw_ast(x == z3.SignExt(2, y))
+# # graph = draw_ast(z == z3.If(x == 0, z3.ZeroExt(3, y), x))
