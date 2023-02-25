@@ -7,3 +7,6 @@
 [submodule "benchmarks/gurobi/modeling-examples"]
 	path = benchmarks/gurobi/modeling-examples
 	url = https://github.com/Gurobi/modeling-examples.git
+[submodule "benchmarks/smtlib/QF_LIA"]
+	path = benchmarks/smtlib/QF_LIA
+	url = https://clc-gitlab.cs.uiowa.edu:2443/SMT-LIB-benchmarks/QF_LIA.git
